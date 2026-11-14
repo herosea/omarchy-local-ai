@@ -215,18 +215,22 @@ cmd_registry() (
       and (. < 8234 or . > 8238) and (. < 8294 or . > 8297) and (. < 8206 or . > 8207) and . != 8232 and . != 8233 and . != 1564));
     def finite: type == "number" and (isinfinite | not) and (isnan | not);
     $own[0].hardware as $shipped
-    | .hardware |= (with_entries(select($shipped[.key] != null) | .key as $h
-        | .value = {match: $shipped[$h].match, recipes: ([.value.recipes[]? | select(type == "object") | . as $r
-            | first($shipped[$h].recipes[] | select(.id == $r.id)) // empty
-            | reduce ("name", "family", "format") as $f (.; if ($r[$f] | text) then .[$f] = $r[$f] else . end)
-            | if ($r.sizeGb | finite and . >= 0) then .sizeGb = $r.sizeGb else . end
-            | if ($r.aa | finite) then .aa = $r.aa else . end
-            | if ($r.reported | type == "boolean") then .reported = $r.reported else . end
-            | if (.capabilities | type == "object") and ($r.capabilities | type == "object") then
-                .capabilities |= with_entries(.key as $k | if ($r.capabilities[$k] | type == "boolean") then .value = $r.capabilities[$k] else . end)
-              else . end]
-          | reduce .[] as $x ([]; if any(.[]; .id == $x.id) then . else . + [$x] end))})
-      | with_entries(select(.value.recipes | length > 0)))' "$tmp") || die "invalid registry catalog"
+    | .hardware as $remote
+    | .hardware = (
+        ($remote | with_entries(select($shipped[.key] != null) | .key as $h
+          | .value = {match: $shipped[$h].match, recipes: ([.value.recipes[]? | select(type == "object") | . as $r
+              | first($shipped[$h].recipes[] | select(.id == $r.id)) // empty
+              | reduce ("name", "family", "format") as $f (.; if ($r[$f] | text) then .[$f] = $r[$f] else . end)
+              | if ($r.sizeGb | finite and . >= 0) then .sizeGb = $r.sizeGb else . end
+              | if ($r.aa | finite) then .aa = $r.aa else . end
+              | if ($r.reported | type == "boolean") then .reported = $r.reported else . end
+              | if (.capabilities | type == "object") and ($r.capabilities | type == "object") then
+                  .capabilities |= with_entries(.key as $k | if ($r.capabilities[$k] | type == "boolean") then .value = $r.capabilities[$k] else . end)
+                else . end]
+            | reduce .[] as $x ([]; if any(.[]; .id == $x.id) then . else . + [$x] end))})
+          | with_entries(select(.value.recipes | length > 0)))
+        + ($shipped | with_entries(select($remote[.key] == null)))
+      )' "$tmp") || die "invalid registry catalog"
   printf '%s\n' "$r" >"$tmp"
   while IFS= read -r r; do
     [[ $(policy "$r" "$tmp") == "ok" ]] || die "registry recipe refused: $(policy "$r" "$tmp")"

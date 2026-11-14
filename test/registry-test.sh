@@ -126,7 +126,12 @@ EDIT=".hardware[\"$hw\"].recipes |= reverse"
 MODE=edit cmd_registry >/dev/null
 [[ $(jq -c --arg h "$hw" '[.hardware[$h].recipes[].id]' "$CATALOG") == "$(jq -c --arg h "$hw" '[.hardware[$h].recipes[].id] | reverse' "$SOURCE")" ]] ||
   { echo "not ok - a reordered card kind"; exit 1; }
-echo 'ok - a refresh can relabel (checked display fields only), withdraw and reorder shipped recipes'
+# a card kind the remote registry does not know about is retained from shipped recipes
+EDIT='del(.hardware["rx-7900-xtx-24gb"])'
+MODE=edit cmd_registry >/dev/null
+jq -e '.hardware["rx-7900-xtx-24gb"] != null and (.hardware["rx-7900-xtx-24gb"].recipes | length > 0)' "$CATALOG" >/dev/null ||
+  { echo "not ok - a hardware kind not present in registry was dropped"; exit 1; }
+echo 'ok - a refresh can relabel (checked display fields only), withdraw and reorder shipped recipes, and retains custom hardware'
 
 # The same id on every refresh; nothing sent when turned off or with DO_NOT_TRACK; an unreachable counter fails nothing
 (( $(jq -s 'map(.id) | unique | length' "$TMP/pings") == 1 && $(wc -l <"$TMP/pings") > 1 )) ||
