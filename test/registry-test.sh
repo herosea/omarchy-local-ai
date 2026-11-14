@@ -131,6 +131,11 @@ EDIT='del(.hardware["rx-7900-xtx-24gb"])'
 MODE=edit cmd_registry >/dev/null
 jq -e '.hardware["rx-7900-xtx-24gb"] != null and (.hardware["rx-7900-xtx-24gb"].recipes | length > 0)' "$CATALOG" >/dev/null ||
   { echo "not ok - a hardware kind not present in registry was dropped"; exit 1; }
+# so is a card kind the registry lists only under ids this version does not ship (the registry moving first)
+EDIT='.hardware["rx-7900-xtx-24gb"].recipes = [.hardware["rx-7900-xtx-24gb"].recipes[0] | .id = "qwen3.8-27b.vllm.256k.2x.rx-7900-xtx-24gb"]'
+MODE=edit cmd_registry >/dev/null
+[[ $(jq -c '[.hardware["rx-7900-xtx-24gb"].recipes[].id]' "$CATALOG") == "$(jq -c '[.hardware["rx-7900-xtx-24gb"].recipes[].id]' "$SOURCE")" ]] ||
+  { echo "not ok - a card kind listed only under other ids lost its shipped recipes"; exit 1; }
 echo 'ok - a refresh can relabel (checked display fields only), withdraw and reorder shipped recipes, and retains custom hardware'
 
 # The same id on every refresh; nothing sent when turned off or with DO_NOT_TRACK; an unreachable counter fails nothing

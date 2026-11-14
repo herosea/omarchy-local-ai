@@ -206,7 +206,9 @@ cmd_registry() (
   # of at most 120 characters, no control characters, bidi controls, line separators or markup), sizeGb (a finite
   # number, not negative), aa (a finite number), reported and each capability the shipped recipe has (booleans).
   # Everything else, its image, launch, weights, serving, needs and the rest, is the shipped recipe's; each card kind
-  # keeps its shipped match. A recipe the plugin does not ship is left out, not fatal; one listed twice counts once.
+  # keeps its shipped match. A recipe the plugin does not ship is left out, not fatal; one listed twice counts once. A
+  # card kind the refresh leaves with nothing — one this version added that the registry does not list yet, or one whose
+  # registry recipes all carry ids it does not ship — keeps the recipes it ships, so the card is still offered.
   jq -e --slurpfile own "$PANEL/recipes.json" '.gateway.image == $own[0].gateway.image' "$tmp" >/dev/null ||
     die "the registry changed the gateway; update the plugin to get it"
   r=$(jq --slurpfile own "$PANEL/recipes.json" '
@@ -216,21 +218,19 @@ cmd_registry() (
     def finite: type == "number" and (isinfinite | not) and (isnan | not);
     $own[0].hardware as $shipped
     | .hardware as $remote
-    | .hardware = (
-        ($remote | with_entries(select($shipped[.key] != null) | .key as $h
-          | .value = {match: $shipped[$h].match, recipes: ([.value.recipes[]? | select(type == "object") | . as $r
-              | first($shipped[$h].recipes[] | select(.id == $r.id)) // empty
-              | reduce ("name", "family", "format") as $f (.; if ($r[$f] | text) then .[$f] = $r[$f] else . end)
-              | if ($r.sizeGb | finite and . >= 0) then .sizeGb = $r.sizeGb else . end
-              | if ($r.aa | finite) then .aa = $r.aa else . end
-              | if ($r.reported | type == "boolean") then .reported = $r.reported else . end
-              | if (.capabilities | type == "object") and ($r.capabilities | type == "object") then
-                  .capabilities |= with_entries(.key as $k | if ($r.capabilities[$k] | type == "boolean") then .value = $r.capabilities[$k] else . end)
-                else . end]
-            | reduce .[] as $x ([]; if any(.[]; .id == $x.id) then . else . + [$x] end))})
-          | with_entries(select(.value.recipes | length > 0)))
-        + ($shipped | with_entries(select($remote[.key] == null)))
-      )' "$tmp") || die "invalid registry catalog"
+    | ($remote | with_entries(select($shipped[.key] != null) | .key as $h
+        | .value = {match: $shipped[$h].match, recipes: ([.value.recipes[]? | select(type == "object") | . as $r
+            | first($shipped[$h].recipes[] | select(.id == $r.id)) // empty
+            | reduce ("name", "family", "format") as $f (.; if ($r[$f] | text) then .[$f] = $r[$f] else . end)
+            | if ($r.sizeGb | finite and . >= 0) then .sizeGb = $r.sizeGb else . end
+            | if ($r.aa | finite) then .aa = $r.aa else . end
+            | if ($r.reported | type == "boolean") then .reported = $r.reported else . end
+            | if (.capabilities | type == "object") and ($r.capabilities | type == "object") then
+                .capabilities |= with_entries(.key as $k | if ($r.capabilities[$k] | type == "boolean") then .value = $r.capabilities[$k] else . end)
+              else . end]
+          | reduce .[] as $x ([]; if any(.[]; .id == $x.id) then . else . + [$x] end))})
+        | with_entries(select(.value.recipes | length > 0))) as $kept
+    | .hardware = ($kept + ($shipped | with_entries(select($kept[.key] == null))))' "$tmp") || die "invalid registry catalog"
   printf '%s\n' "$r" >"$tmp"
   while IFS= read -r r; do
     [[ $(policy "$r" "$tmp") == "ok" ]] || die "registry recipe refused: $(policy "$r" "$tmp")"
