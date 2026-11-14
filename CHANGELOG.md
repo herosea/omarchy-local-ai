@@ -5,7 +5,10 @@ Versions follow semver and live in `manifest.json`. Every release is a tag `vX.Y
 ## [Unreleased]
 
 ### Added
-- Qwen3.8-27B (Unsloth UD-IQ4_XS Dynamic 3.1, and IQ3_S + MTP) and Swift-1.5-Qwen3.8-27B on the Radeon RX 7900 XTX 24 GB in Docker: llama.cpp's Vulkan image, 131,072 context.
+- Qwen3.8-27B on the Radeon RX 7900 XTX 24 GB in Docker, on llama.cpp's Vulkan image: Unsloth UD-IQ4_XS, pinned at its Dynamic 3.1 build, at 131,072 context, and GSQ-RCO IQ3_S + MTP and Swift-1.5-Qwen3.8-27B IQ3_S + MTP at 262,144, each with the MTP head in the file as its drafter.
+
+### Changed
+- The supported cards list names the Radeon RX 7900 XTX, RX 7900 XT and RX 9070 XT, and no longer the RX 6800 XT, which has had no recipe since 6.20.0.
 
 ## [6.24.0] - 2026-10-18
 
