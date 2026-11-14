@@ -4,6 +4,9 @@ Versions follow semver and live in `manifest.json`. Every release is a tag `vX.Y
 
 ## [Unreleased]
 
+### Added
+- Qwen3.8-27B (Unsloth UD-IQ4_XS Dynamic 3.1, and IQ3_S + MTP) and Swift-1.5-Qwen3.8-27B on the Radeon RX 7900 XTX 24 GB in Docker: llama.cpp's Vulkan image, 131,072 context.
+
 ## [6.24.0] - 2026-10-18
 
 ### Changed

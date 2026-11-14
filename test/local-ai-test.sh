@@ -212,6 +212,14 @@ esac'
 [[ $(jq -r '.gpus[0].hw' "$TMP/snap-vulkan.json") == rx-9070-xt-16gb ]] || fail "AMD Vulkan card match"
 pass "AMD discovery matches the RX 9070 XT Vulkan recipes"
 
+shim amd-smi 'case $1 in
+static) printf "{\"gpu_data\":[{\"gpu\":0,\"asic\":{\"market_name\":\"AMD Radeon RX 7900 XTX\"},\"vram\":{\"size\":{\"value\":24560}},\"bus\":{\"bdf\":\"0000:03:00.0\"}}]}" ;;
+metric) echo "{}" ;;
+esac'
+"$CLI" snapshot >"$TMP/snap-7900xtx.json"
+[[ $(jq -r '.gpus[0].hw' "$TMP/snap-7900xtx.json") == rx-7900-xtx-24gb ]] || fail "AMD RX 7900 XTX card match"
+pass "AMD discovery matches the RX 7900 XTX 24GB recipes"
+
 # A unified-memory APU (Strix Halo) reports only its BIOS carve-out as VRAM. The card matches by GPU
 # name and host RAM covering its stated memory, and the snapshot shows the unified total, not 512 MiB.
 jq '.hardware["ryzen-ai-max-365-128gb"] = {match: {backend: "amd-rocm", name: "AMD Radeon 8060S",
