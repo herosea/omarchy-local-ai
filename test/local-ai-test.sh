@@ -53,6 +53,8 @@ printf "0, NVIDIA GeForce RTX 4090, 24564, 300, 41\n1, NVIDIA GeForce GT 710, 20
 # The CLI falls back to /opt/rocm/bin/amd-smi, so absence from PATH no longer
 # keeps a host's real AMD card out of the sandbox; pin an empty report.
 shim amd-smi 'echo "{\"gpu_data\":[]}"'
+# polling reads the last live listing, so a machine whose cards are gone needs that listing dropped too
+rm -f "$STATE/amd-static.json"
 shim omarchy-setup-security-sudoless-docker 'exit 0'
 # the account is listed in the docker group unless SHIM_NOGROUP (setup not run); newgrp starts the shell it is given and
 # grants nothing, as when a login is still out of reach of the socket
@@ -179,6 +181,8 @@ shim amd-smi 'printf "Unhandled import error: No module named '\''amdsmi'\''\n"'
 "$CLI" snapshot >"$TMP/snap-nosmi.json" || fail "a failed amd-smi broke the snapshot"
 [[ $(jq -r '.gpus | length' "$TMP/snap-nosmi.json") == 0 ]] || fail "a failed amd-smi is no AMD cards" "$(jq -c . "$TMP/snap-nosmi.json")"
 shim amd-smi 'echo "{\"gpu_data\":[]}"'
+# polling reads the last live listing, so a machine whose cards are gone needs that listing dropped too
+rm -f "$STATE/amd-static.json"
 shim nvidia-smi '[[ $* == *uuid* ]] && { echo "GPU-test-${@: -1}"; exit; }
 printf "0, NVIDIA GeForce RTX 4090, 24564, 300, 41\n1, NVIDIA GeForce GT 710, 2048, 10, 30\n2, NVIDIA GeForce RTX 4090, 24564, 300, 38\n"'
 pass "a probe that fails (nvidia-smi's and amd-smi's own error text) reads as no cards, not as a broken snapshot"
@@ -195,9 +199,28 @@ shim nvidia-smi 'exit 9'
 # so the test adds one with the RX 9070 XT's recipe: detection is what is tested here, not the catalog
 jq '.hardware["rx-7600-xt-16gb"] = {match: {backend: "amd-rocm", name: "AMD Radeon RX 7600 XT", names: ["rx7600xt"], vramGb: 16},
   recipes: .hardware["rx-9070-xt-16gb"].recipes}' "$ROOT/recipes.json" >"$TMP/plugin/recipes.json"
-"$CLI" snapshot >"$TMP/snap-amd.json" || fail "the AMD snapshot"
+"$CLI" snapshot --live >"$TMP/snap-amd.json" || fail "the AMD snapshot"
 [[ $(jq -r '.gpus | map(select(.backend == "amd-rocm") | "\(.key)=\(.hw)=\(.vramGb)=\(.tempC)") | join(" ")' "$TMP/snap-amd.json") == "amd-rocm:0=rx-7600-xt-16gb=16=41 amd-rocm:1==8=38" ]] ||
   fail "RX 7600 XT and RX 7600" "$(jq -c .gpus "$TMP/snap-amd.json")"
+# Polling (the panel closed) asks no card anything: amd-smi opens /dev/kfd, which resumes a suspended card and
+# restarts its autosuspend timer, so a card that idles in BACO would never stay suspended. It lists the cards from
+# the last live listing with readings unknown; --live is the open panel asking for figures.
+[[ ! -e $TMP/amd-smi-runs ]] || rm -f $TMP/amd-smi-runs
+export AMD_SMI_RUNS=$TMP/amd-smi-runs
+shim amd-smi 'case $1 in
+static) echo run >>"$AMD_SMI_RUNS"; printf "{\"gpu_data\":[{\"gpu\":0,\"asic\":{\"market_name\":\"AMD Radeon RX 7600 XT\"},\"vram\":{\"size\":{\"value\":16368}},\"bus\":{\"bdf\":\"0000:03:00.0\"}}]}" ;;
+metric) printf "{\"gpu_data\":[{\"gpu\":0,\"mem_usage\":{\"used_vram\":{\"value\":210}},\"temperature\":{\"edge\":{\"value\":41}}}]}" ;;
+esac'
+"$CLI" snapshot >"$TMP/snap-poll.json" || fail "the polling snapshot"
+[[ ! -s $TMP/amd-smi-runs ]] || fail "polling ran amd-smi" "$(cat $TMP/amd-smi-runs)"
+[[ $(jq -r '.gpus | map(select(.backend == "amd-rocm") | "\(.key)=\(.usedMiB)=\(.tempC)") | join(" ")' "$TMP/snap-poll.json") == "amd-rocm:0=null=null amd-rocm:1=null=null" ]] ||
+  fail "polling lists the card from the last listing, readings unknown" "$(jq -c .gpus "$TMP/snap-poll.json")"
+"$CLI" snapshot --live >"$TMP/snap-open.json" || fail "the live snapshot"
+[[ -s $TMP/amd-smi-runs ]] || fail "--live did not ask amd-smi"
+[[ $(jq -r '.gpus | map(select(.backend == "amd-rocm") | "\(.usedMiB)=\(.tempC)") | join(" ")' "$TMP/snap-open.json") == "210=41" ]] ||
+  fail "--live reports the card's figures" "$(jq -c .gpus "$TMP/snap-open.json")"
+rm -f "$TMP/amd-smi-runs"
+pass "polling asks no card anything; --live reports figures"
 jq -e '[.kinds[] | select(.hw == "rx-7600-xt-16gb") | .free[0], (.models | length > 0)] == ["amd-rocm:0", true]' "$TMP/snap-amd.json" >/dev/null ||
   fail "the RX 7600 XT kind" "$(jq -c .kinds "$TMP/snap-amd.json")"
 # amd-smi's Python can segfault (issue #118): the card still lists from static, without readings, and the
@@ -207,8 +230,8 @@ static) printf "{\"gpu_data\":[{\"gpu\":0,\"asic\":{\"market_name\":\"AMD Radeon
 metric) echo run >>"$(dirname "$0")/metric-runs"; kill -SEGV $$ ;;
 esac'
 rm -f "$TMP/bin/metric-runs" "$STATE"/amd-smi-*.crashed
-"$CLI" snapshot >"$TMP/snap-segv.json" || fail "a crashing amd-smi broke the snapshot"
-"$CLI" snapshot >"$TMP/snap-segv.json" || fail "a crashing amd-smi broke the second snapshot"
+"$CLI" snapshot --live >"$TMP/snap-segv.json" || fail "a crashing amd-smi broke the snapshot"
+"$CLI" snapshot --live >"$TMP/snap-segv.json" || fail "a crashing amd-smi broke the second snapshot"
 [[ $(jq -r '.gpus | map(select(.backend == "amd-rocm") | "\(.hw)=\(.tempC)") | join(" ")' "$TMP/snap-segv.json") == "rx-7600-xt-16gb=null" ]] ||
   fail "a crashing amd-smi metric hid the card" "$(jq -c .gpus "$TMP/snap-segv.json")"
 [[ $(wc -l <"$TMP/bin/metric-runs") == 1 && -f $STATE/amd-smi-metric.crashed ]] ||
@@ -220,7 +243,7 @@ shim amd-smi 'case $1 in
 static) printf "{\"gpu_data\":[{\"gpu\":0,\"asic\":{\"market_name\":\"AMD Radeon RX 9070 XT\"},\"vram\":{\"size\":{\"value\":16368}},\"bus\":{\"bdf\":\"0000:03:00.0\"}}]}" ;;
 metric) echo "{}" ;;
 esac'
-"$CLI" snapshot >"$TMP/snap-vulkan.json"
+"$CLI" snapshot --live >"$TMP/snap-vulkan.json"
 [[ $(jq -r '.gpus[0].hw' "$TMP/snap-vulkan.json") == rx-9070-xt-16gb ]] || fail "AMD Vulkan card match"
 pass "AMD discovery matches the RX 9070 XT Vulkan recipes"
 
@@ -228,7 +251,7 @@ shim amd-smi 'case $1 in
 static) printf "{\"gpu_data\":[{\"gpu\":0,\"asic\":{\"market_name\":\"AMD Radeon RX 7900 XTX\"},\"vram\":{\"size\":{\"value\":24560}},\"bus\":{\"bdf\":\"0000:03:00.0\"}}]}" ;;
 metric) echo "{}" ;;
 esac'
-"$CLI" snapshot >"$TMP/snap-7900xtx.json"
+"$CLI" snapshot --live >"$TMP/snap-7900xtx.json"
 [[ $(jq -r '.gpus[0].hw' "$TMP/snap-7900xtx.json") == rx-7900-xtx-24gb ]] || fail "AMD RX 7900 XTX card match"
 pass "AMD discovery matches the RX 7900 XTX 24GB recipes"
 
@@ -244,11 +267,11 @@ metric) echo "{\"gpu_data\":[{\"gpu\":0,\"mem_usage\":{\"used_vram\":{\"value\":
 esac'
 export MEMINFO=$TMP/meminfo
 printf 'MemTotal: %s kB\nMemAvailable: %s kB\n' $((130 * 1024 * 1024)) $((120 * 1024 * 1024)) >"$MEMINFO"
-"$CLI" snapshot >"$TMP/snap-strix.json"
+"$CLI" snapshot --live >"$TMP/snap-strix.json"
 [[ $(jq -r '.gpus[0] | "\(.hw) \(.totalMiB) \(.usedMiB)"' "$TMP/snap-strix.json") == "ryzen-ai-max-365-128gb 133120 null" ]] ||
   fail "unified memory match" "$(jq -c .gpus "$TMP/snap-strix.json")"
 printf 'MemTotal: %s kB\nMemAvailable: %s kB\n' $((64 * 1024 * 1024)) $((60 * 1024 * 1024)) >"$MEMINFO"
-"$CLI" snapshot >"$TMP/snap-strix.json"
+"$CLI" snapshot --live >"$TMP/snap-strix.json"
 [[ $(jq -r '.gpus[0].hw' "$TMP/snap-strix.json") == "" ]] || fail "a 64 GB host matched the 128 GB card" "$(jq -c .gpus "$TMP/snap-strix.json")"
 # the same 128 GB machine with a 32 GiB carve-out: MemTotal is ~94 GiB, which amd-smi's VRAM size makes up
 shim amd-smi 'case $1 in
@@ -256,20 +279,22 @@ static) echo "{\"gpu_data\":[{\"gpu\":0,\"asic\":{\"market_name\":\"AMD Radeon 8
 metric) echo "{\"gpu_data\":[{\"gpu\":0,\"mem_usage\":{\"used_vram\":{\"value\":210}}}]}" ;;
 esac'
 printf 'MemTotal: %s kB\nMemAvailable: %s kB\n' $((94 * 1024 * 1024)) $((54 * 1024 * 1024)) >"$MEMINFO"
-"$CLI" snapshot >"$TMP/snap-strix.json"
+"$CLI" snapshot --live >"$TMP/snap-strix.json"
 [[ $(jq -r '.gpus[0].hw' "$TMP/snap-strix.json") == "ryzen-ai-max-365-128gb" ]] ||
   fail "a 32 GiB carve-out hid the 128 GB card" "$(jq -c .gpus "$TMP/snap-strix.json")"
 # amd-smi is a `#!/usr/bin/env python3` script: a mise python3 first on PATH lacks its module, so the system one runs it
 shim python3 'exit 1'
 printf '#!/usr/bin/env python3\n%s\n' "$(sed 1d "$TMP/bin/amd-smi")" >"$TMP/r2" && mv "$TMP/r2" "$TMP/bin/amd-smi" && chmod +x "$TMP/bin/amd-smi"
 printf '#!/bin/bash\nexec bash "$@"\n' >"$TMP/syspython" && chmod +x "$TMP/syspython"
-PYTHON3=$TMP/syspython "$CLI" snapshot >"$TMP/snap-strix.json"
+PYTHON3=$TMP/syspython "$CLI" snapshot --live >"$TMP/snap-strix.json"
 rm -f "$TMP/bin/python3"
 [[ $(jq -r '.gpus[0].hw' "$TMP/snap-strix.json") == "ryzen-ai-max-365-128gb" ]] ||
   fail "a mise python3 on PATH hid the AMD card" "$(jq -c .gpus "$TMP/snap-strix.json")"
 unset MEMINFO; rm -f "$TMP/meminfo"
 pass "a unified-memory card matches by host RAM, not the BIOS carve-out"
 shim amd-smi 'echo "{\"gpu_data\":[]}"'
+# polling reads the last live listing, so a machine whose cards are gone needs that listing dropped too
+rm -f "$STATE/amd-static.json"
 
 # An NVIDIA GPU sharing host memory (GB10, RTX Spark) prints [N/A] for its memory: the snapshot still builds, the
 # card is unified even when its kind does not say so, and a 128 GiB machine's 119.5 GiB MemTotal covers 128 GB
@@ -742,6 +767,8 @@ pass "loading shows the engine's own step and percent, and a GPU reset mid-load 
 "$CLI" stop "$ID"
 rm -f "$TMP/loading" "$LOCAL_AI_SYSFS/class/drm/renderD129/device/devcoredump"
 shim amd-smi 'echo "{\"gpu_data\":[]}"'
+# polling reads the last live listing, so a machine whose cards are gone needs that listing dropped too
+rm -f "$STATE/amd-static.json"
 rm -f "$TMP/bin/readlink"
 recipes "$PIN"
 

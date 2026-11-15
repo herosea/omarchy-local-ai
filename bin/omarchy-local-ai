@@ -31,6 +31,11 @@ RECIPES=$PANEL/recipes.json
 [[ ! $CATALOG -nt $RECIPES ]] || RECIPES=$CATALOG
 LABEL=io.omarchy.local-ai
 SYS=${LOCAL_AI_SYSFS:-/sys}
+# LIVE=1: ask the cards for their figures. Every such question can resume a runtime-suspended card and restarts
+# its autosuspend timer, so the panel's polling (a snapshot without --live) reads no card at all: it lists them
+# from the last live listing, with memory use and temperature unknown. Verbs that act on a card, and a snapshot
+# taken while the panel is open (--live), ask for real numbers.
+LIVE=1
 AGENTS=(pi claude codex opencode omp crush grok copilot hermes)
 umask 077
 
@@ -347,22 +352,10 @@ smi() {
 # awake, and the cards report memory use and temperature as unknown rather than being woken. The panel's
 # 30 s polling then leaves an idle card asleep; an open panel still shows live figures, because a card in
 # use is not suspended, and so is any card the first run after a reboot finds asleep with no listing yet.
-amd_suspended() {
-  local d any=
-  for d in "$SYS"/bus/pci/devices/*; do
-    [[ $(cat "$d/vendor" 2>/dev/null) == 0x1002 ]] || continue
-    [[ $(cat "$d/class" 2>/dev/null) == 0x030000 ]] || continue
-    any=1
-    [[ $(cat "$d/power/runtime_status" 2>/dev/null) == suspended ]] || return 1
-  done
-  [[ -n $any ]]
-}
-
 amd() {
   # ROCm installs amd-smi in /opt/rocm/bin, which a session started before the
   # install does not have on PATH.
-  local amdsmi s m static=$STATE/amd-static.json asleep=
-  amd_suspended && asleep=1
+  local amdsmi s m static=$STATE/amd-static.json
   amdsmi=$(command -v amd-smi || echo /opt/rocm/bin/amd-smi)
   [[ -x $amdsmi ]] || { echo '[]'; return; }
   # amd-smi is a `#!/usr/bin/env python3` script whose module is installed for the system Python; a mise or
@@ -371,12 +364,15 @@ amd() {
   if [[ -x ${PYTHON3:-/usr/bin/python3} ]] && head -n1 "${amdsmi[0]}" 2>/dev/null | grep -q '^#!.*python3'; then
     amdsmi=("${PYTHON3:-/usr/bin/python3}" "$(readlink -f "${amdsmi[0]}")")
   fi
-  if [[ -n $asleep && -s $static ]]; then
+  # amd-smi opens /dev/kfd, which resumes a runtime-suspended card and restarts its autosuspend timer: asked
+  # every 30 s it never lets that timer expire. Polling gets the last listing instead, from a live query that
+  # found a card; the first run after a reboot has no listing yet and asks once, which is the last time it does.
+  if ((LIVE == 0)) && [[ -s $static ]]; then
     s=$(cat "$static") m='{}'
   else
     s=$(smi static "${amdsmi[@]}" static --json)
     m=$(smi metric "${amdsmi[@]}" metric --mem-usage --temperature --json)
-    # keep the listing for the next time the cards are asleep, but only a query that found one
+    # keep the listing for the polls, but only from a query that found a card
     jq -e '(.gpu_data // []) | length > 0' >/dev/null 2>&1 <<<"$s" &&
       mkdir -p "$STATE" 2>/dev/null && printf '%s\n' "$s" >"$static" 2>/dev/null
   fi
@@ -1944,6 +1940,8 @@ downloads() {
 
 cmd_snapshot() {
   local deps=() d id port at st pid sat boot obj why rc code gw ts="" sa="" sf="" sfs="" v="" a rstate="" rmsg=""
+  # --live: the panel is open, so a card's figures are worth the resume and the autosuspend timer it resets
+  [[ ${1:-} == --live ]] || LIVE=0
   mkdir -p "$STATE/deploy"
   adopt
   # whether a model can start, and if not what the panel offers (lib/access.sh); Docker is asked only when it can answer

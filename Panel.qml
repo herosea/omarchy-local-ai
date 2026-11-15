@@ -275,7 +275,10 @@ Panel {
   }
   Process {
     id: poll
-    command: ["timeout", "--kill-after=5", "90", root.cli, "snapshot"]
+    // The backend asks the cards for live figures only when told to (--live): each such read resumes a suspended
+    // card and restarts its autosuspend timer, so polling every 30 s kept an idle card awake and its fan on. Open
+    // panel, live numbers; closed, the last listing it had.
+    command: ["timeout", "--kill-after=5", "90", root.cli, "snapshot"].concat(root.opened || root.full ? ["--live"] : [])
     stdout: StdioCollector { id: pollOut; waitForEnd: true }
     onExited: function(code) { root.polled(code, pollOut.text); if (root.again) { root.again = false; Qt.callLater(root.refresh) } }
   }
