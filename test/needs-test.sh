@@ -11,7 +11,13 @@ fail() { printf '%s\n' "${2:-}" >&2; printf 'not ok - %s\n' "$1" >&2; exit 1; }
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 export HOME=$TMP/home XDG_RUNTIME_DIR=$TMP/run MEMINFO=$TMP/meminfo
-mkdir -p "$HOME" "$TMP/bin" "$TMP/plugin/bin" "$TMP/plugin/lib"
+# The cards below are shimmed, but the backend only asks about a card sysfs shows: a probe of one that is not there
+# starts nvidia-modprobe, which reads every PCI config space and resumes suspended cards. Keep the two in step.
+export LOCAL_AI_SYSFS=$TMP/sys
+mkdir -p "$HOME" "$TMP/bin" "$TMP/plugin/bin" "$TMP/plugin/lib" "$LOCAL_AI_SYSFS/bus/pci/devices/0000:01:00.0"
+printf '%s\n' 0x10de >"$LOCAL_AI_SYSFS/bus/pci/devices/0000:01:00.0/vendor"
+printf '%s\n' 0x030000 >"$LOCAL_AI_SYSFS/bus/pci/devices/0000:01:00.0/class"
+printf '%s\n' 0x2204 >"$LOCAL_AI_SYSFS/bus/pci/devices/0000:01:00.0/device"
 cp "$ROOT/bin/omarchy-local-ai" "$TMP/plugin/bin/"
 cp "$ROOT/lib/access.sh" "$TMP/plugin/lib/"
 cp "$ROOT/manifest.json" "$TMP/plugin/"

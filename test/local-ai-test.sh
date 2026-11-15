@@ -143,6 +143,18 @@ esac'
 REAL_JQ=$(command -v jq)
 shim jq "printf '%s\n' \"\$*\" >>\"\$SHIM/jq.log\"; exec $REAL_JQ \"\$@\""
 export PATH=$TMP/bin:/usr/bin:/bin
+# A card is only asked about when sysfs shows one of its vendor: nvidia-smi starts nvidia-modprobe, which
+# enumerates every PCI function and reads its config space, and that resumes a runtime-suspended card. So the
+# machine under test has the cards these shims report, whichever hardware runs the tests.
+card() { # card <bdf> <vendor> <class> <device>
+  local d=$LOCAL_AI_SYSFS/bus/pci/devices/$1
+  mkdir -p "$d"
+  printf '%s\n' "$2" >"$d/vendor"
+  printf '%s\n' "$3" >"$d/class"
+  printf '%s\n' "$4" >"$d/device"
+}
+export LOCAL_AI_SYSFS=$TMP/sys
+card 0000:01:00.0 0x10de 0x030000 0x2684
 # NVIDIA CDI specs are read from here, not /etc/cdi: one device, /dev/null, at its real numbers (1:3)
 export CDI_DIRS=$TMP/cdi
 cdi() { mkdir -p "$CDI_DIRS"; printf 'devices:\n  - name: "0"\n    containerEdits:\n      deviceNodes:\n        - path: /dev/null\n          major: %s\n          minor: 3\n' "$1" >"$CDI_DIRS/nvidia.yaml"; }
@@ -729,7 +741,6 @@ grep -q "starting reading the weights: file 2 of 2" "$STATE/log" || fail "load s
 pass "loading shows the engine's own step and percent, and a GPU reset mid-load fails the start at once"
 "$CLI" stop "$ID"
 rm -f "$TMP/loading" "$LOCAL_AI_SYSFS/class/drm/renderD129/device/devcoredump"
-unset LOCAL_AI_SYSFS
 shim amd-smi 'echo "{\"gpu_data\":[]}"'
 rm -f "$TMP/bin/readlink"
 recipes "$PIN"
